@@ -33,26 +33,26 @@ from vpython import (
 # - clean top view
 # ============================================================
 
-ROWS = 8
-COLS = 24
+ROWS = 10
+COLS = 30
 TOTAL_SLOTS = ROWS * COLS
 TIME_STEPS = 18
 
 INTRO_SECONDS = 2
 
-LEFT_COLS = 12
-RIGHT_COLS = 12
+LEFT_COLS = 15
+RIGHT_COLS = 15
 
-SLOT_WIDTH = 2.05
-SLOT_LENGTH = 3.42
-SLOT_GAP_X = 0.28
+SLOT_WIDTH = 1.95
+SLOT_LENGTH = 3.25
+SLOT_GAP_X = 0.22
 
-CENTER_AISLE_WIDTH = 4.55
-BLOCK_AISLE_WIDTH = 4.35
-BLOCK_SPACING_Z = 12.35
+CENTER_AISLE_WIDTH = 4.35
+BLOCK_AISLE_WIDTH = 4.10
+BLOCK_SPACING_Z = 10.90
 
-CAR_WIDTH = 1.05
-CAR_LENGTH = 2.10
+CAR_WIDTH = 0.95
+CAR_LENGTH = 1.95
 CAR_HEIGHT = 0.52
 CAR_Y = 0.55
 
@@ -95,6 +95,7 @@ ZONE_COLORS = [
     vector(0.28, 0.75, 0.40),
     vector(0.95, 0.60, 0.24),
     vector(0.70, 0.45, 0.95),
+    vector(0.95, 0.45, 0.62),
 ]
 
 SENSOR_GREEN = vector(0.05, 0.85, 0.20)
@@ -260,7 +261,7 @@ class RealisticBasementParkingSimulation:
     def build_scene(self):
         scene.title = ""
         scene.width = 1450
-        scene.height = 780
+        scene.height = 840
         scene.background = vector(0.90, 0.94, 0.98)
         scene.center = self.scene_center
         scene.range = 28
@@ -551,12 +552,11 @@ class RealisticBasementParkingSimulation:
         self.create_barriers()
 
         # Screen-fit centered top view.
-        # Canvas size is kept smaller than the browser width, so it does not crop.
-        # Camera is centered from the visible basement frame, not from the browser.
+        # Camera is calculated from the full basement frame so the enlarged layout stays centered.
         view_min_x = -lot_width / 2
         view_max_x = lot_width / 2
-        view_min_z = min_z - SLOT_LENGTH / 2 - 3.8
-        view_max_z = self.front_lane_z + 3.8
+        view_min_z = min_z - SLOT_LENGTH / 2 - 3.5
+        view_max_z = self.front_lane_z + 3.5
 
         visual_center_x = (view_min_x + view_max_x) / 2
         visual_center_z = (view_min_z + view_max_z) / 2
@@ -566,10 +566,10 @@ class RealisticBasementParkingSimulation:
         aspect_ratio = scene.width / scene.height
 
         scene.center = vector(visual_center_x, 0, visual_center_z)
-        scene.range = max(view_depth / 2, view_width / (2 * aspect_ratio)) * 1.08
+        scene.range = max(view_depth / 2, view_width / (2 * aspect_ratio)) * 1.03
 
-        scene.camera.pos = vector(visual_center_x, 74, visual_center_z + 0.001)
-        scene.camera.axis = vector(0, -74, 0)
+        scene.camera.pos = vector(visual_center_x, 82, visual_center_z + 0.001)
+        scene.camera.axis = vector(0, -82, 0)
         scene.up = vector(0, 0, -1)
 
     # ============================================================
@@ -955,7 +955,7 @@ class RealisticBasementParkingSimulation:
         print("\nSmart Parking 3D Realistic Basement Simulation Started")
         print(f"Parking Basement Size: {ROWS} x {COLS}")
         print(f"Total Slots: {TOTAL_SLOTS}")
-        print("Screen-fit centered layout with realistic details, slot sensors, boom barriers, and improved car movement.")
+        print("Larger 10x30 screen-fit centered layout with realistic details, slot sensors, boom barriers, and improved car movement.")
 
         self.update_sensor_lights()
         self.intro_pause()
