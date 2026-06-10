@@ -1,4 +1,5 @@
 import os
+import math
 import random
 import joblib
 import numpy as np
@@ -11,6 +12,7 @@ from vpython import (
     rate,
     scene,
     cylinder,
+    sphere,
     compound,
     arrow,
     mag,
@@ -18,27 +20,40 @@ from vpython import (
     label,
 )
 
-ROWS = 6
-COLS = 12
+# ============================================================
+# REALISTIC TOP VIEW 3D SMART PARKING BASEMENT SIMULATION
+# Features:
+# - light concrete basement theme
+# - entry/exit sign boards
+# - boom barriers
+# - green/red parking sensors
+# - safety blocks around pillars
+# - proper entry/parking/exit route
+# - no roof
+# - clean top view
+# ============================================================
+
+ROWS = 8
+COLS = 24
 TOTAL_SLOTS = ROWS * COLS
 TIME_STEPS = 18
 
 INTRO_SECONDS = 2
 
-LEFT_COLS = 6
-RIGHT_COLS = 6
+LEFT_COLS = 12
+RIGHT_COLS = 12
 
-SLOT_WIDTH = 2.2
-SLOT_LENGTH = 3.6
-SLOT_GAP_X = 0.45
+SLOT_WIDTH = 2.05
+SLOT_LENGTH = 3.42
+SLOT_GAP_X = 0.28
 
-CENTER_AISLE_WIDTH = 4.6
-BLOCK_AISLE_WIDTH = 4.4
-BLOCK_SPACING_Z = 13.2
+CENTER_AISLE_WIDTH = 4.55
+BLOCK_AISLE_WIDTH = 4.35
+BLOCK_SPACING_Z = 12.35
 
-CAR_WIDTH = 1.28
-CAR_LENGTH = 2.45
-CAR_HEIGHT = 0.55
+CAR_WIDTH = 1.05
+CAR_LENGTH = 2.10
+CAR_HEIGHT = 0.52
 CAR_Y = 0.55
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,27 +79,34 @@ FEATURES = [
 ]
 
 CAR_COLORS = [
-    vector(0.85, 0.10, 0.10),
-    vector(0.10, 0.25, 0.85),
-    vector(0.10, 0.58, 0.20),
+    vector(0.82, 0.08, 0.08),
+    vector(0.08, 0.22, 0.82),
+    vector(0.08, 0.55, 0.18),
     vector(0.95, 0.72, 0.08),
-    vector(0.56, 0.56, 0.58),
-    vector(0.18, 0.18, 0.20),
-    vector(0.78, 0.36, 0.08),
-    vector(0.55, 0.20, 0.75),
+    vector(0.58, 0.58, 0.60),
+    vector(0.16, 0.16, 0.18),
+    vector(0.75, 0.34, 0.08),
+    vector(0.54, 0.20, 0.72),
+    vector(0.95, 0.95, 0.95),
 ]
 
 ZONE_COLORS = [
     vector(0.28, 0.56, 0.95),
     vector(0.28, 0.75, 0.40),
     vector(0.95, 0.60, 0.24),
+    vector(0.70, 0.45, 0.95),
 ]
 
+SENSOR_GREEN = vector(0.05, 0.85, 0.20)
+SENSOR_RED = vector(0.90, 0.05, 0.05)
 
-class TopViewBasementParkingSimulation:
+
+class RealisticBasementParkingSimulation:
     def __init__(self):
         self.grid = np.zeros((ROWS, COLS), dtype=int)
+
         self.car_objects = [[None for _ in range(COLS)] for _ in range(ROWS)]
+        self.sensor_lights = [[None for _ in range(COLS)] for _ in range(ROWS)]
 
         self.slot_positions = []
         self.block_aisle_z_values = []
@@ -99,7 +121,7 @@ class TopViewBasementParkingSimulation:
         self.occupancy_history = []
         self.peak_congestion = 0
 
-        self.scene_center = vector(0, 0, 2)
+        self.scene_center = vector(0, 0, 0)
 
         self.dataset = self.load_dataset()
         self.model = self.load_model()
@@ -109,7 +131,18 @@ class TopViewBasementParkingSimulation:
         self.exit_position = None
         self.front_lane_z = None
 
+        self.entry_barrier = None
+        self.exit_barrier = None
+        self.entry_barrier_pivot = None
+        self.exit_barrier_pivot = None
+        self.entry_barrier_open = False
+        self.exit_barrier_open = False
+
         self.build_scene()
+
+    # ============================================================
+    # DATA + ML
+    # ============================================================
 
     def load_dataset(self):
         df = pd.read_csv(DATA_PATH)
@@ -149,11 +182,13 @@ class TopViewBasementParkingSimulation:
 
     def predict_demand(self, hour):
         sample = self.dataset.sample(1).copy()
+
         sample["Hour"] = hour
         sample["Occupancy_Rate"] = self.get_occupancy_rate()
 
         x = sample[FEATURES]
         x_scaled = self.scaler.transform(x)
+
         prediction = self.model.predict(x_scaled)[0]
         return prediction
 
@@ -173,18 +208,23 @@ class TopViewBasementParkingSimulation:
 
         return cars_arrived, demand_status
 
+    # ============================================================
+    # LAYOUT
+    # ============================================================
+
     def compute_slot_positions(self):
         positions = []
 
+        block_count = ROWS // 2
+        start_z = -((block_count - 1) * BLOCK_SPACING_Z) / 2
+
         self.block_aisle_z_values = [
-            -BLOCK_SPACING_Z,
-            0,
-            BLOCK_SPACING_Z,
+            start_z + i * BLOCK_SPACING_Z for i in range(block_count)
         ]
 
         for r in range(ROWS):
             block_index = r // 2
-            is_top_row = (r % 2 == 0)
+            is_top_row = r % 2 == 0
             block_aisle_z = self.block_aisle_z_values[block_index]
 
             if is_top_row:
@@ -213,14 +253,19 @@ class TopViewBasementParkingSimulation:
 
         return positions
 
+    # ============================================================
+    # SCENE
+    # ============================================================
+
     def build_scene(self):
         scene.title = ""
-        scene.width = 1500
-        scene.height = 850
+        scene.width = 1450
+        scene.height = 780
         scene.background = vector(0.90, 0.94, 0.98)
         scene.center = self.scene_center
-        scene.range = 32
+        scene.range = 28
 
+        # Top-view style. No auto camera movement.
         scene.userspin = False
         scene.userzoom = True
         scene.userpan = True
@@ -233,43 +278,48 @@ class TopViewBasementParkingSimulation:
         min_x, max_x = min(all_x), max(all_x)
         min_z, max_z = min(all_z), max(all_z)
 
-        lot_width = (max_x - min_x) + SLOT_WIDTH + 18
-        lot_depth = (max_z - min_z) + SLOT_LENGTH + 18
+        lot_width = (max_x - min_x) + SLOT_WIDTH + 9
+        lot_depth = (max_z - min_z) + SLOT_LENGTH + 10
 
         self.front_lane_z = max_z + SLOT_LENGTH / 2 + 5.0
-        self.entry_position = vector(min_x - 10.5, CAR_Y, self.front_lane_z)
-        self.exit_position = vector(max_x + 10.5, CAR_Y, self.front_lane_z)
+        self.entry_position = vector(min_x + 2.0, CAR_Y, self.front_lane_z)
+        self.exit_position = vector(max_x - 2.0, CAR_Y, self.front_lane_z)
 
+        # Concrete floor
         box(
             pos=vector(0, -0.15, 0),
             size=vector(lot_width, 0.30, lot_depth),
             color=vector(0.80, 0.80, 0.78),
         )
 
+        # Central driving aisle
         box(
             pos=vector(0, 0.02, 0),
             size=vector(CENTER_AISLE_WIDTH, 0.05, lot_depth - 8),
             color=vector(0.50, 0.50, 0.52),
         )
 
+        # Front lane
         box(
             pos=vector(0, 0.02, self.front_lane_z),
             size=vector(lot_width - 4, 0.05, 3.9),
             color=vector(0.50, 0.50, 0.52),
         )
 
+        # Entry and exit ramps
         box(
-            pos=vector(self.entry_position.x - 2.8, 0.03, self.front_lane_z),
-            size=vector(8.0, 0.06, 3.9),
+            pos=vector(self.entry_position.x, 0.03, self.front_lane_z),
+            size=vector(6.8, 0.06, 3.9),
             color=vector(0.56, 0.56, 0.58),
         )
 
         box(
-            pos=vector(self.exit_position.x + 2.8, 0.03, self.front_lane_z),
-            size=vector(8.0, 0.06, 3.9),
+            pos=vector(self.exit_position.x, 0.03, self.front_lane_z),
+            size=vector(6.8, 0.06, 3.9),
             color=vector(0.56, 0.56, 0.58),
         )
 
+        # Lane dividers
         box(
             pos=vector(0, 0.08, self.front_lane_z),
             size=vector(lot_width - 10, 0.04, 0.10),
@@ -282,6 +332,7 @@ class TopViewBasementParkingSimulation:
             color=vector(1.0, 0.78, 0.08),
         )
 
+        # Block aisles and zone strips
         for index, aisle_z in enumerate(self.block_aisle_z_values):
             zone_color = ZONE_COLORS[index]
 
@@ -303,6 +354,7 @@ class TopViewBasementParkingSimulation:
                 color=zone_color,
             )
 
+        # Low boundaries
         wall_color = vector(0.84, 0.84, 0.82)
 
         box(
@@ -323,16 +375,16 @@ class TopViewBasementParkingSimulation:
             color=wall_color,
         )
 
-        # ENTRY gate marker
+        # ENTRY gate and sign
         box(
-            pos=vector(self.entry_position.x, 0.55, self.entry_position.z - 2.1),
+            pos=vector(self.entry_position.x, 0.55, self.entry_position.z - 1.75),
             size=vector(3.2, 1.1, 0.20),
             color=vector(0.08, 0.82, 0.25),
             opacity=0.95,
         )
 
         label(
-            pos=vector(self.entry_position.x, 1.35, self.entry_position.z - 2.1),
+            pos=vector(self.entry_position.x, 1.35, self.entry_position.z - 1.75),
             text="ENTRY",
             height=13,
             box=True,
@@ -341,16 +393,16 @@ class TopViewBasementParkingSimulation:
             opacity=0.90,
         )
 
-        # EXIT gate marker
+        # EXIT gate and sign
         box(
-            pos=vector(self.exit_position.x, 0.55, self.exit_position.z + 2.1),
+            pos=vector(self.exit_position.x, 0.55, self.exit_position.z + 1.75),
             size=vector(3.2, 1.1, 0.20),
             color=vector(0.90, 0.10, 0.10),
             opacity=0.95,
         )
 
         label(
-            pos=vector(self.exit_position.x, 1.35, self.exit_position.z + 2.1),
+            pos=vector(self.exit_position.x, 1.35, self.exit_position.z + 1.75),
             text="EXIT",
             height=13,
             box=True,
@@ -359,15 +411,16 @@ class TopViewBasementParkingSimulation:
             opacity=0.90,
         )
 
+        # Route arrows
         arrow(
-            pos=vector(self.entry_position.x + 2.0, 0.28, self.front_lane_z),
+            pos=vector(self.entry_position.x + 1.4, 0.28, self.front_lane_z),
             axis=vector(5.0, 0, 0),
             shaftwidth=0.22,
             color=vector(0.08, 0.70, 0.20),
         )
 
         arrow(
-            pos=vector(self.exit_position.x - 7.0, 0.28, self.front_lane_z),
+            pos=vector(self.exit_position.x - 6.2, 0.28, self.front_lane_z),
             axis=vector(5.0, 0, 0),
             shaftwidth=0.22,
             color=vector(0.85, 0.08, 0.08),
@@ -397,6 +450,7 @@ class TopViewBasementParkingSimulation:
                 color=zone_color,
             )
 
+        # Parking slots and parking sensor lights
         for r in range(ROWS):
             block_index = r // 2
             zone_color = ZONE_COLORS[block_index]
@@ -437,6 +491,21 @@ class TopViewBasementParkingSimulation:
                     color=border_color,
                 )
 
+                if r % 2 == 0:
+                    sensor_z = pos.z + SLOT_LENGTH / 2 - 0.25
+                else:
+                    sensor_z = pos.z - SLOT_LENGTH / 2 + 0.25
+
+                sensor = sphere(
+                    pos=vector(pos.x, 0.24, sensor_z),
+                    radius=0.13,
+                    color=SENSOR_GREEN,
+                    emissive=True,
+                )
+
+                self.sensor_lights[r][c] = sensor
+
+        # Pillars with yellow-black safety bases
         pillar_color = vector(0.72, 0.72, 0.70)
 
         pillar_x_values = [
@@ -448,6 +517,19 @@ class TopViewBasementParkingSimulation:
 
         for x in pillar_x_values:
             for z in self.block_aisle_z_values:
+                box(
+                    pos=vector(x, 0.08, z),
+                    size=vector(1.45, 0.12, 1.45),
+                    color=vector(0.10, 0.10, 0.10),
+                )
+
+                for offset in [-0.45, 0.0, 0.45]:
+                    box(
+                        pos=vector(x + offset, 0.16, z),
+                        size=vector(0.18, 0.08, 1.45),
+                        color=vector(1.0, 0.75, 0.02),
+                    )
+
                 cylinder(
                     pos=vector(x, 0, z),
                     axis=vector(0, 1.4, 0),
@@ -455,6 +537,7 @@ class TopViewBasementParkingSimulation:
                     color=pillar_color,
                 )
 
+        # Ground light strips
         for x in np.linspace(min_x, max_x, 5):
             for z in np.linspace(min_z, max_z, 4):
                 box(
@@ -464,58 +547,222 @@ class TopViewBasementParkingSimulation:
                     opacity=0.75,
                 )
 
-        scene.camera.pos = vector(0, 62, 2)
-        scene.camera.axis = vector(0, -62, 0)
+        # Boom barriers
+        self.create_barriers()
+
+        # Screen-fit centered top view.
+        # Canvas size is kept smaller than the browser width, so it does not crop.
+        # Camera is centered from the visible basement frame, not from the browser.
+        view_min_x = -lot_width / 2
+        view_max_x = lot_width / 2
+        view_min_z = min_z - SLOT_LENGTH / 2 - 3.8
+        view_max_z = self.front_lane_z + 3.8
+
+        visual_center_x = (view_min_x + view_max_x) / 2
+        visual_center_z = (view_min_z + view_max_z) / 2
+
+        view_width = view_max_x - view_min_x
+        view_depth = view_max_z - view_min_z
+        aspect_ratio = scene.width / scene.height
+
+        scene.center = vector(visual_center_x, 0, visual_center_z)
+        scene.range = max(view_depth / 2, view_width / (2 * aspect_ratio)) * 1.08
+
+        scene.camera.pos = vector(visual_center_x, 74, visual_center_z + 0.001)
+        scene.camera.axis = vector(0, -74, 0)
         scene.up = vector(0, 0, -1)
+
+    # ============================================================
+    # BARRIERS
+    # ============================================================
+
+    def create_barriers(self):
+        barrier_y = 0.42
+
+        self.entry_barrier_pivot = vector(
+            self.entry_position.x + 4.2,
+            barrier_y,
+            self.front_lane_z - 1.85,
+        )
+
+        self.entry_barrier = box(
+            pos=self.entry_barrier_pivot + vector(0, 0, 1.85),
+            size=vector(0.22, 0.16, 3.7),
+            color=vector(0.95, 0.12, 0.12),
+        )
+
+        cylinder(
+            pos=vector(self.entry_barrier_pivot.x, 0, self.entry_barrier_pivot.z),
+            axis=vector(0, 0.8, 0),
+            radius=0.13,
+            color=vector(0.15, 0.15, 0.15),
+        )
+
+        self.exit_barrier_pivot = vector(
+            self.exit_position.x - 4.2,
+            barrier_y,
+            self.front_lane_z - 1.85,
+        )
+
+        self.exit_barrier = box(
+            pos=self.exit_barrier_pivot + vector(0, 0, 1.85),
+            size=vector(0.22, 0.16, 3.7),
+            color=vector(0.95, 0.12, 0.12),
+        )
+
+        cylinder(
+            pos=vector(self.exit_barrier_pivot.x, 0, self.exit_barrier_pivot.z),
+            axis=vector(0, 0.8, 0),
+            radius=0.13,
+            color=vector(0.15, 0.15, 0.15),
+        )
+
+    def animate_barrier(self, barrier, pivot, direction):
+        for _ in range(18):
+            rate(45)
+            barrier.rotate(
+                angle=direction * (math.pi / 2) / 18,
+                axis=vector(0, 1, 0),
+                origin=pivot,
+            )
+
+    def open_entry_barrier(self):
+        if not self.entry_barrier_open:
+            self.animate_barrier(self.entry_barrier, self.entry_barrier_pivot, -1)
+            self.entry_barrier_open = True
+
+    def close_entry_barrier(self):
+        if self.entry_barrier_open:
+            self.animate_barrier(self.entry_barrier, self.entry_barrier_pivot, 1)
+            self.entry_barrier_open = False
+
+    def open_exit_barrier(self):
+        if not self.exit_barrier_open:
+            self.animate_barrier(self.exit_barrier, self.exit_barrier_pivot, 1)
+            self.exit_barrier_open = True
+
+    def close_exit_barrier(self):
+        if self.exit_barrier_open:
+            self.animate_barrier(self.exit_barrier, self.exit_barrier_pivot, -1)
+            self.exit_barrier_open = False
+
+    # ============================================================
+    # VISUAL HELPERS
+    # ============================================================
+
+    def update_sensor_lights(self):
+        for r in range(ROWS):
+            for c in range(COLS):
+                sensor = self.sensor_lights[r][c]
+
+                if sensor is None:
+                    continue
+
+                if self.grid[r, c] == 1:
+                    sensor.color = SENSOR_RED
+                else:
+                    sensor.color = SENSOR_GREEN
+
+    # ============================================================
+    # CAR MODEL
+    # ============================================================
 
     def create_car(self, start_position):
         car_color = random.choice(CAR_COLORS)
 
+        length_scale = random.uniform(0.92, 1.08)
+        width_scale = random.uniform(0.92, 1.06)
+
+        car_length = CAR_LENGTH * length_scale
+        car_width = CAR_WIDTH * width_scale
+
         body = box(
             pos=vector(0, 0, 0),
-            size=vector(CAR_LENGTH, CAR_HEIGHT, CAR_WIDTH),
+            size=vector(car_length, CAR_HEIGHT, car_width),
             color=car_color,
         )
 
         roof = box(
             pos=vector(-0.10, 0.38, 0),
-            size=vector(CAR_LENGTH * 0.46, CAR_HEIGHT * 0.65, CAR_WIDTH * 0.70),
+            size=vector(car_length * 0.46, CAR_HEIGHT * 0.65, car_width * 0.70),
             color=car_color * 0.82,
         )
 
         front_glass = box(
-            pos=vector(-0.76, 0.48, 0),
-            size=vector(0.34, 0.04, CAR_WIDTH * 0.58),
+            pos=vector(-car_length * 0.31, 0.48, 0),
+            size=vector(0.34, 0.04, car_width * 0.58),
             color=vector(0.45, 0.75, 0.95),
             opacity=0.78,
         )
 
         back_glass = box(
-            pos=vector(0.58, 0.48, 0),
-            size=vector(0.34, 0.04, CAR_WIDTH * 0.58),
+            pos=vector(car_length * 0.24, 0.48, 0),
+            size=vector(0.34, 0.04, car_width * 0.58),
             color=vector(0.45, 0.75, 0.95),
             opacity=0.78,
         )
 
+        front_light_left = box(
+            pos=vector(-car_length / 2 - 0.02, 0.05, -car_width * 0.25),
+            size=vector(0.05, 0.08, 0.18),
+            color=vector(1.0, 0.95, 0.60),
+            opacity=0.9,
+        )
+
+        front_light_right = box(
+            pos=vector(-car_length / 2 - 0.02, 0.05, car_width * 0.25),
+            size=vector(0.05, 0.08, 0.18),
+            color=vector(1.0, 0.95, 0.60),
+            opacity=0.9,
+        )
+
+        rear_light_left = box(
+            pos=vector(car_length / 2 + 0.02, 0.05, -car_width * 0.25),
+            size=vector(0.05, 0.08, 0.18),
+            color=vector(0.95, 0.05, 0.05),
+            opacity=0.9,
+        )
+
+        rear_light_right = box(
+            pos=vector(car_length / 2 + 0.02, 0.05, car_width * 0.25),
+            size=vector(0.05, 0.08, 0.18),
+            color=vector(0.95, 0.05, 0.05),
+            opacity=0.9,
+        )
+
         wheels = []
 
-        for x in [-0.82, 0.82]:
-            for z in [-0.68, 0.68]:
+        for x in [-car_length * 0.32, car_length * 0.32]:
+            for z in [-car_width * 0.55, car_width * 0.55]:
                 wheels.append(
                     cylinder(
                         pos=vector(x, -0.30, z),
                         axis=vector(0, 0, 0.18),
-                        radius=0.22,
+                        radius=0.20,
                         color=color.black,
                     )
                 )
 
-        car = compound([body, roof, front_glass, back_glass] + wheels)
+        car = compound(
+            [
+                body,
+                roof,
+                front_glass,
+                back_glass,
+                front_light_left,
+                front_light_right,
+                rear_light_left,
+                rear_light_right,
+            ]
+            + wheels
+        )
+
         car.pos = start_position
         return car
 
     def set_car_direction(self, car, start, end):
         direction = end - start
+
         if mag(direction) > 0:
             try:
                 car.axis = norm(direction)
@@ -523,7 +770,7 @@ class TopViewBasementParkingSimulation:
             except Exception:
                 pass
 
-    def animate_car(self, car, start, end, steps=34):
+    def animate_car(self, car, start, end, steps=36):
         self.set_car_direction(car, start, end)
 
         for i in range(steps):
@@ -531,7 +778,7 @@ class TopViewBasementParkingSimulation:
             t = (i + 1) / steps
             car.pos = start + (end - start) * t
 
-    def animate_route(self, car, route, steps_per_segment=30):
+    def animate_route(self, car, route, steps_per_segment=32):
         for i in range(len(route) - 1):
             self.animate_car(car, route[i], route[i + 1], steps=steps_per_segment)
 
@@ -542,6 +789,10 @@ class TopViewBasementParkingSimulation:
     def intro_pause(self):
         for _ in range(INTRO_SECONDS * 45):
             rate(45)
+
+    # ============================================================
+    # ROUTES
+    # ============================================================
 
     def get_route_to_slot(self, target_position, row_index):
         block_index = row_index // 2
@@ -575,6 +826,10 @@ class TopViewBasementParkingSimulation:
             self.exit_position,
         ]
 
+    # ============================================================
+    # SIMULATION
+    # ============================================================
+
     def add_cars(self, hour):
         empty_slots = list(zip(*np.where(self.grid == 0)))
         random.shuffle(empty_slots)
@@ -592,13 +847,20 @@ class TopViewBasementParkingSimulation:
 
                 car = self.create_car(self.entry_position)
                 route = self.get_route_to_slot(target_position, r)
-                self.animate_route(car, route, steps_per_segment=28)
+
+                self.open_entry_barrier()
+                self.animate_car(car, route[0], route[1], steps=34)
+                self.close_entry_barrier()
+
+                self.animate_route(car, route[1:], steps_per_segment=30)
 
                 self.grid[r, c] = 1
                 self.car_objects[r][c] = car
+                self.update_sensor_lights()
 
                 cars_parked += 1
                 self.wait_times.append(random.randint(1, 4))
+
             else:
                 cars_waiting += 1
                 cars_rejected += 1
@@ -638,11 +900,19 @@ class TopViewBasementParkingSimulation:
             if car is not None:
                 start_position = self.slot_positions[r][c]
                 route = self.get_exit_route_from_slot(start_position, r)
-                self.animate_route(car, route, steps_per_segment=28)
+
+                self.animate_route(car, route[:-1], steps_per_segment=30)
+
+                self.open_exit_barrier()
+                self.animate_car(car, route[-2], route[-1], steps=34)
+                self.close_exit_barrier()
+
                 car.visible = False
 
             self.grid[r, c] = 0
             self.car_objects[r][c] = None
+            self.update_sensor_lights()
+
             cars_left += 1
 
         self.total_left += cars_left
@@ -669,7 +939,7 @@ class TopViewBasementParkingSimulation:
         )
 
         print("\n" + "=" * 80)
-        print("FINAL 3D TOP VIEW BASEMENT ML-BASED SIMULATION METRICS")
+        print("FINAL 3D REALISTIC BASEMENT ML-BASED SIMULATION METRICS")
         print("=" * 80)
         print(f"Total Cars Arrived: {self.total_arrived}")
         print(f"Total Cars Parked: {self.total_parked}")
@@ -682,11 +952,12 @@ class TopViewBasementParkingSimulation:
         print("=" * 80)
 
     def run(self):
-        print("\nSmart Parking 3D Top View Basement Simulation Started")
+        print("\nSmart Parking 3D Realistic Basement Simulation Started")
         print(f"Parking Basement Size: {ROWS} x {COLS}")
         print(f"Total Slots: {TOTAL_SLOTS}")
-        print("ENTRY and EXIT sign boards added.")
+        print("Screen-fit centered layout with realistic details, slot sensors, boom barriers, and improved car movement.")
 
+        self.update_sensor_lights()
         self.intro_pause()
 
         for timestep in range(1, TIME_STEPS + 1):
@@ -724,5 +995,5 @@ class TopViewBasementParkingSimulation:
 
 
 if __name__ == "__main__":
-    simulation = TopViewBasementParkingSimulation()
+    simulation = RealisticBasementParkingSimulation()
     simulation.run()
