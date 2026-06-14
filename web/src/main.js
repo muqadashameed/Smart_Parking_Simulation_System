@@ -46,7 +46,7 @@ const TOTAL_SLOTS = ROWS * COLS;
 const SLOT_WIDTH = 2.05;
 const SLOT_LENGTH = 3.25;
 const SLOT_GAP = 0.26;
-const ROW_GAP = 1.28;
+const ROW_GAP = 2.85;
 const CENTER_AISLE = 8.4;
 
 const CAR_Y = 0.43;
@@ -60,7 +60,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xdbeafe);
 
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 1200);
-camera.position.set(0, 76, 66);
+camera.position.set(0, 86, 78);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -251,6 +251,25 @@ function buildBasement() {
   addBox('front-entry-road', 12.5, 0.05, 4.4, ENTRY_GATE_X + 3.2, 0.05, frontZ + 2.5, 0xb7c3d0);
   addBox('front-exit-road', 12.5, 0.05, 4.4, EXIT_GATE_X - 3.2, 0.05, frontZ + 2.5, 0xb7c3d0);
 
+  // Proper internal road aisles between parking rows.
+  // Cars use these roads instead of crossing over parked cars.
+  for (let row = 0; row < ROWS; row++) {
+    const aisleZ = getSlotZ(row) + SLOT_LENGTH / 2 + ROW_GAP / 2;
+
+    if (aisleZ < frontZ - 1.5) {
+      addBox(
+        'row-drive-aisle',
+        lotWidth - 6,
+        0.045,
+        ROW_GAP * 0.92,
+        0,
+        0.065,
+        aisleZ,
+        0xd1d9e3
+      );
+    }
+  }
+
   addBox('back-wall', lotWidth, 2.0, 0.35, 0, 1, backZ - 2, 0xe2e8f0);
   addBox('left-wall', 0.35, 2.0, frontZ - backZ + 8, -lotWidth / 2, 1, (frontZ + backZ) / 2, 0xe2e8f0);
   addBox('right-wall', 0.35, 2.0, frontZ - backZ + 8, lotWidth / 2, 1, (frontZ + backZ) / 2, 0xe2e8f0);
@@ -397,6 +416,13 @@ function routeBusy() {
   return activeMovers.length > 0;
 }
 
+function getApproachAisleZ(slot) {
+  // Every slot is approached from the road aisle in front of its row.
+  // This prevents cars from driving over occupied parking spots.
+  const aisleZ = slot.position.z + SLOT_LENGTH / 2 + ROW_GAP / 2;
+  return clamp(aisleZ, backZ + 2, frontZ - 2);
+}
+
 function spawnCar() {
   if (routeBusy()) return;
 
@@ -417,11 +443,14 @@ function spawnCar() {
   car.position.set(ENTRY_GATE_X, CAR_Y, frontZ + 7.5);
   scene.add(car);
 
+  const aisleZ = getApproachAisleZ(slot);
+
   const path = [
     car.position.clone(),
     new THREE.Vector3(ENTRY_GATE_X, CAR_Y, frontZ + 2.4),
     new THREE.Vector3(ENTRY_LANE_X, CAR_Y, frontZ),
-    new THREE.Vector3(ENTRY_LANE_X, CAR_Y, slot.position.z),
+    new THREE.Vector3(ENTRY_LANE_X, CAR_Y, aisleZ),
+    new THREE.Vector3(slot.position.x, CAR_Y, aisleZ),
     slot.position.clone()
   ];
 
@@ -450,9 +479,12 @@ function departCar() {
   slot.car = null;
   setSensor(slot, false);
 
+  const aisleZ = getApproachAisleZ(slot);
+
   const path = [
     car.position.clone(),
-    new THREE.Vector3(EXIT_LANE_X, CAR_Y, slot.position.z),
+    new THREE.Vector3(slot.position.x, CAR_Y, aisleZ),
+    new THREE.Vector3(EXIT_LANE_X, CAR_Y, aisleZ),
     new THREE.Vector3(EXIT_LANE_X, CAR_Y, frontZ),
     new THREE.Vector3(EXIT_GATE_X, CAR_Y, frontZ + 2.4),
     new THREE.Vector3(EXIT_GATE_X, CAR_Y, frontZ + 7.5)
