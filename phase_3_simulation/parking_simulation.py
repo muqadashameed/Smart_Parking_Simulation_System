@@ -267,7 +267,11 @@ class RealisticBasementParkingSimulation:
         scene.range = 28
 
         # Top-view style. No auto camera movement.
-        scene.userspin = False
+        # Manual 3D camera controls.
+        # Left mouse/trackpad drag = 360 rotate
+        # Scroll/pinch = zoom in and zoom out
+        # Right drag / two-finger drag = pan
+        scene.userspin = True
         scene.userzoom = True
         scene.userpan = True
 
@@ -955,7 +959,7 @@ class RealisticBasementParkingSimulation:
         print("\nSmart Parking 3D Realistic Basement Simulation Started")
         print(f"Parking Basement Size: {ROWS} x {COLS}")
         print(f"Total Slots: {TOTAL_SLOTS}")
-        print("Larger 10x30 screen-fit centered layout with realistic details, slot sensors, boom barriers, and improved car movement.")
+        print("Manual camera enabled: drag to rotate 360, scroll/pinch to zoom, right drag/two-finger drag to pan.")
 
         self.update_sensor_lights()
         self.intro_pause()
